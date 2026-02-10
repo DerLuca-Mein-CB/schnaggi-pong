@@ -12,14 +12,15 @@ h1{font-size:1.8em;margin-bottom:8px;text-shadow:0 0 20px #e94560}
 button{font-size:1.1em;padding:12px 28px;margin:8px;background:#e94560;color:#fff;border:none;border-radius:8px;cursor:pointer}
 button:hover{background:#c73e54}
 input{padding:12px;font-size:1.1em;border-radius:8px;border:none;margin:8px;width:260px;text-align:center}
-#status{color:#e94560;margin:10px;font-size:1.1em;min-height:1.4em}
+#status{color:#e94560;margin:10px;font-size:1.1em;min-height:2.8em}
 canvas{border:3px solid #e94560;border-radius:8px;background:#16213e;display:none}
 #scores{font-size:1.4em;margin:8px;display:none}
 .p1c{color:#0f0}.p2c{color:#e94560}
 #gmsg{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-size:2em;font-weight:bold;color:#fff;text-shadow:0 0 30px #e94560;pointer-events:none;opacity:0;transition:opacity 0.3s}
-#room-display{background:#16213e;padding:12px 20px;border-radius:8px;margin:10px;font-size:1.2em;display:none}
+#room-display{background:#16213e;padding:15px 20px;border-radius:8px;margin:10px;font-size:1.1em;display:none;max-width:90vw}
 #room-display b{color:#0ff}
 .info{color:#888;font-size:0.85em;margin:5px}
+a{color:#0ff}
 </style>
 </head>
 <body>
@@ -39,39 +40,52 @@ canvas{border:3px solid #e94560;border-radius:8px;background:#16213e;display:non
 <div id="gmsg"></div>
 
 <script type="module">
-import {joinRoom} from 'https://cdn.jsdelivr.net/npm/trystero/torrent.min.js';
+import {joinRoom} from 'https://cdn.jsdelivr.net/npm/trystero/nostr.min.js';
 
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
-const st = document.getElementById('status');
-const menu = document.getElementById('menu');
-const scoresDiv = document.getElementById('scores');
-const gmsg = document.getElementById('gmsg');
-const roomDisp = document.getElementById('room-display');
+const canvas=document.getElementById('game');
+const ctx=canvas.getContext('2d');
+const st=document.getElementById('status');
+const menu=document.getElementById('menu');
+const scoresDiv=document.getElementById('scores');
+const gmsg=document.getElementById('gmsg');
+const roomDisp=document.getElementById('room-display');
 
-const PW=12, PH=80, BR=8, CW=600, CH=400;
-let isHost=false, gameOn=false, myScore=0, theirScore=0, myY=160;
-let sendPaddle, sendState, sendEvent;
+const PW=12,PH=80,BR=8,CW=600,CH=400;
+let isHost=false,gameOn=false,myScore=0,theirScore=0,myY=160;
+let sendPaddle,sendState,sendEvent;
 let state={ball:{x:300,y:200,vx:5,vy:3},p1:{y:160},p2:{y:160}};
+let peerJoined=false;
+
+const rtcConfig={
+  iceServers:[
+    {urls:'stun:stun.l.google.com:19302'},
+    {urls:'stun:stun1.l.google.com:19302'},
+    {urls:'turn:openrelay.metered.ca:80',username:'openrelayproject',credential:'openrelayproject'},
+    {urls:'turn:openrelay.metered.ca:443',username:'openrelayproject',credential:'openrelayproject'},
+    {urls:'turn:openrelay.metered.ca:443?transport=tcp',username:'openrelayproject',credential:'openrelayproject'}
+  ]
+};
 
 const params=new URLSearchParams(location.search);
 const joinCode=params.get('r');
 if(joinCode){
   document.getElementById('btn-host').style.display='none';
   document.getElementById('btn-join').style.display='none';
-  st.textContent='Verbinde mit Raum: '+joinCode+'...';
+  st.innerHTML='Verbinde mit Raum: <b>'+joinCode+'</b>...<br><span class="info">Suche Gegner über Nostr-Relays...</span>';
   connect(joinCode,false);
 }
 
 document.getElementById('btn-host').onclick=()=>{
-  const code=Math.random().toString(36).slice(2,8).toUpperCase();
+  const code=Math.random().toString(36).slice(2,7).toUpperCase();
   isHost=true;
   document.getElementById('btn-host').style.display='none';
   document.getElementById('btn-join').style.display='none';
   const link=location.origin+location.pathname+'?r='+code;
   roomDisp.style.display='block';
-  roomDisp.innerHTML='Raum-Code: <b>'+code+'</b><br><br><a href="'+link+'" style="color:#0ff;word-break:break-all">'+link+'</a><br><br><span class="info">Schick den Link oder Code deinem Kumpel!</span>';
-  st.textContent='Warte auf Gegner... 👀';
+  roomDisp.innerHTML='Raum-Code: <b style="font-size:1.4em">'+code+'</b><br><br>'
+    +'Link: <a href="'+link+'">'+link+'</a><br><br>'
+    +'<span class="info">Schick den Link oder Code deinem Kumpel!</span>';
+  st.innerHTML='Warte auf Gegner... 👀<br><span class="info">Verbinde über Nostr-Relays...</span>';
   connect(code,true);
 };
 
@@ -85,88 +99,99 @@ document.getElementById('btn-connect').onclick=()=>{
   const c=document.getElementById('join-input').value.trim().toUpperCase();
   if(!c)return;
   document.getElementById('join-section').style.display='none';
-  st.textContent='Verbinde mit Raum: '+c+'...';
+  st.innerHTML='Verbinde mit Raum: <b>'+c+'</b>...<br><span class="info">Suche Gegner über Nostr-Relays...</span>';
   connect(c,false);
 };
 
-function connect(code, hosting){
+function connect(code,hosting){
   isHost=hosting;
-  const room=joinRoom({appId:'schnaggi-pong-2026'},code);
+  const room=joinRoom({appId:'schnaggi-pong-v3',rtcConfig},code);
+  
   const [sp,gp]=room.makeAction('p');
   const [ss,gs]=room.makeAction('s');
   const [se,ge]=room.makeAction('e');
-  sendPaddle=sp; sendState=ss; sendEvent=se;
+  sendPaddle=sp;sendState=ss;sendEvent=se;
 
-  gp((d)=>{
-    if(isHost) state.p2.y=d; else state.p1.y=d;
-  });
-  gs((d)=>{ if(!isHost) state=d; });
-  ge((d)=>{
-    if(d.t==='score'){ myScore=d.them; theirScore=d.me; updateScores(); }
-    if(d.t==='msg') showMsg(d.text);
-    if(d.t==='start') startGame();
+  gp(d=>{if(isHost)state.p2.y=d;else state.p1.y=d;});
+  gs(d=>{if(!isHost)state=d;});
+  ge(d=>{
+    if(d.t==='score'){myScore=d.them;theirScore=d.me;updateScores();}
+    if(d.t==='msg')showMsg(d.text);
+    if(d.t==='start')startGame();
   });
 
-  room.onPeerJoin(()=>{
-    st.textContent='✅ Verbunden!';
-    if(isHost) setTimeout(()=>{ sendEvent({t:'start'}); startGame(); },1000);
+  room.onPeerJoin(pid=>{
+    peerJoined=true;
+    st.innerHTML='✅ Gegner verbunden!';
+    console.log('Peer joined:',pid);
+    if(isHost)setTimeout(()=>{sendEvent({t:'start'});startGame();},1500);
   });
-  room.onPeerLeave(()=>{ st.textContent='❌ Verbindung verloren'; gameOn=false; menu.style.display='block'; });
+  room.onPeerLeave(()=>{
+    st.innerHTML='❌ Gegner hat verlassen';
+    gameOn=false;menu.style.display='block';canvas.style.display='none';scoresDiv.style.display='none';
+  });
+
+  // Connection timeout hint
+  setTimeout(()=>{
+    if(!peerJoined){
+      st.innerHTML+=`<br><span class="info">⏳ Noch keine Verbindung... Stelle sicher, dass dein Kumpel den Link geöffnet hat!</span>`;
+    }
+  },15000);
 }
 
 function startGame(){
   menu.style.display='none';
   canvas.style.display='block';
   scoresDiv.style.display='block';
-  gameOn=true; myScore=0; theirScore=0; updateScores();
+  gameOn=true;myScore=0;theirScore=0;updateScores();
   showMsg("LOS GEHT'S! 🏓");
-  if(isHost) resetBall();
+  if(isHost)resetBall();
   requestAnimationFrame(loop);
 }
 
-function resetBall(){
-  state.ball={x:300,y:200,vx:(Math.random()>0.5?1:-1)*5,vy:(Math.random()-0.5)*6};
-}
+function resetBall(){state.ball={x:300,y:200,vx:(Math.random()>0.5?1:-1)*5,vy:(Math.random()-0.5)*6};}
 
 function updateScores(){
   document.getElementById('s1').textContent=myScore;
   document.getElementById('s2').textContent=theirScore;
 }
 
-function showMsg(t){ gmsg.textContent=t; gmsg.style.opacity=1; setTimeout(()=>gmsg.style.opacity=0,1500); }
+function showMsg(t){gmsg.textContent=t;gmsg.style.opacity=1;setTimeout(()=>gmsg.style.opacity=0,1500);}
 
+let frameCnt=0;
 function loop(){
   if(!gameOn)return;
-  sendPaddle(myY);
+  frameCnt++;
+  if(frameCnt%2===0)sendPaddle(myY); // throttle sends
 
   if(isHost){
     state.p1.y=myY;
     let b=state.ball;
-    b.x+=b.vx; b.y+=b.vy;
+    b.x+=b.vx;b.y+=b.vy;
     if(b.y-BR<0){b.y=BR;b.vy=Math.abs(b.vy);}
     if(b.y+BR>CH){b.y=CH-BR;b.vy=-Math.abs(b.vy);}
     if(b.x-BR<PW+10&&b.y>state.p1.y&&b.y<state.p1.y+PH&&b.vx<0){
-      b.vx=Math.abs(b.vx)*1.05; b.vy+=(b.y-(state.p1.y+PH/2))*0.15;
+      b.vx=Math.abs(b.vx)*1.05;b.vy+=(b.y-(state.p1.y+PH/2))*0.15;
     }
     if(b.x+BR>CW-10-PW&&b.y>state.p2.y&&b.y<state.p2.y+PH&&b.vx>0){
-      b.vx=-Math.abs(b.vx)*1.05; b.vy+=(b.y-(state.p2.y+PH/2))*0.15;
+      b.vx=-Math.abs(b.vx)*1.05;b.vy+=(b.y-(state.p2.y+PH/2))*0.15;
     }
     let spd=Math.sqrt(b.vx*b.vx+b.vy*b.vy);
     if(spd>15){b.vx*=15/spd;b.vy*=15/spd;}
     if(b.x<0){
-      theirScore++; updateScores();
+      theirScore++;updateScores();
       sendEvent({t:'score',me:theirScore,them:myScore});
-      showMsg('DIGGA! 💀'); sendEvent({t:'msg',text:'JAAAA! 🔥'});
+      showMsg('DIGGA! 💀');sendEvent({t:'msg',text:'JAAAA! 🔥'});
       resetBall();
     }
     if(b.x>CW){
-      myScore++; updateScores();
+      myScore++;updateScores();
       sendEvent({t:'score',me:myScore,them:theirScore});
-      showMsg('JAAAA! 🔥'); sendEvent({t:'msg',text:'DIGGA! 💀'});
+      showMsg('JAAAA! 🔥');sendEvent({t:'msg',text:'DIGGA! 💀'});
       resetBall();
     }
-    sendState(state);
-  } else {
+    if(frameCnt%2===0)sendState(state);
+  }else{
     state.p2.y=myY;
   }
   draw();
@@ -175,13 +200,13 @@ function loop(){
 
 function draw(){
   ctx.clearRect(0,0,CW,CH);
-  ctx.setLineDash([8,8]); ctx.strokeStyle='#333';
-  ctx.beginPath(); ctx.moveTo(300,0); ctx.lineTo(300,400); ctx.stroke();
+  ctx.setLineDash([8,8]);ctx.strokeStyle='#333';
+  ctx.beginPath();ctx.moveTo(300,0);ctx.lineTo(300,400);ctx.stroke();
   ctx.setLineDash([]);
-  ctx.fillStyle='#0f0'; ctx.fillRect(10,state.p1.y,PW,PH);
-  ctx.fillStyle='#e94560'; ctx.fillRect(CW-10-PW,state.p2.y,PW,PH);
-  ctx.fillStyle='#fff'; ctx.beginPath();
-  ctx.arc(state.ball.x,state.ball.y,BR,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#0f0';ctx.fillRect(10,state.p1.y,PW,PH);
+  ctx.fillStyle='#e94560';ctx.fillRect(CW-10-PW,state.p2.y,PW,PH);
+  ctx.fillStyle='#fff';ctx.beginPath();
+  ctx.arc(state.ball.x,state.ball.y,BR,0,Math.PI*2);ctx.fill();
 }
 
 canvas.addEventListener('mousemove',e=>{
