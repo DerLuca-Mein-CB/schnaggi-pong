@@ -6,222 +6,222 @@
 <title>🏓 Schnaggi Pong - Multiplayer</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Segoe UI',sans-serif;color:#fff;overflow:hidden;touch-action:none}
-h1{font-size:1.8em;margin-bottom:8px;text-shadow:0 0 20px #e94560}
-#menu{text-align:center;margin:20px}
+body{background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Segoe UI',sans-serif;color:#fff;overflow:hidden}
+h1{font-size:1.8em;margin-bottom:5px;text-shadow:0 0 20px #e94560}
+.sub{color:#888;margin-bottom:10px;font-size:0.9em}
+#menu{text-align:center;margin:10px}
 button{font-size:1.1em;padding:12px 28px;margin:8px;background:#e94560;color:#fff;border:none;border-radius:8px;cursor:pointer}
 button:hover{background:#c73e54}
-input{padding:12px;font-size:1.1em;border-radius:8px;border:none;margin:8px;width:260px;text-align:center}
-#status{color:#e94560;margin:10px;font-size:1.1em;min-height:2.8em}
-canvas{border:3px solid #e94560;border-radius:8px;background:#16213e;display:none}
-#scores{font-size:1.4em;margin:8px;display:none}
+canvas{border:3px solid #e94560;border-radius:8px;background:#16213e}
+#scores{font-size:1.5em;margin:10px}
 .p1c{color:#0f0}.p2c{color:#e94560}
-#gmsg{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-size:2em;font-weight:bold;color:#fff;text-shadow:0 0 30px #e94560;pointer-events:none;opacity:0;transition:opacity 0.3s}
-#room-display{background:#16213e;padding:15px 20px;border-radius:8px;margin:10px;font-size:1.1em;display:none;max-width:90vw}
-#room-display b{color:#0ff}
-.info{color:#888;font-size:0.85em;margin:5px}
-a{color:#0ff}
+#gmsg{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-size:2.5em;font-weight:bold;color:#fff;text-shadow:0 0 30px #e94560;pointer-events:none;opacity:0;transition:opacity 0.3s;z-index:10}
+#controls{color:#888;font-size:0.9em;margin:8px}
+#win{display:none;text-align:center;margin:15px}
+#win h2{font-size:2em;color:#e94560;margin-bottom:10px}
 </style>
 </head>
 <body>
 <h1>🏓 Schnaggi Pong</h1>
-<div id="scores"><span class="p1c">Du: <span id="s1">0</span></span> | <span class="p2c">Gegner: <span id="s2">0</span></span></div>
-<canvas id="game" width="600" height="400"></canvas>
+<div class="sub">2 Spieler · 1 Tastatur</div>
+<div id="scores"><span class="p1c">🟢 Spieler 1: <span id="s1">0</span></span> &nbsp;|&nbsp; <span class="p2c">🔴 Spieler 2: <span id="s2">0</span></span></div>
+<canvas id="game" width="700" height="450"></canvas>
+<div id="controls">🟢 Spieler 1: <b>W</b> / <b>S</b> &nbsp;&nbsp;|&nbsp;&nbsp; 🔴 Spieler 2: <b>↑</b> / <b>↓</b></div>
 <div id="menu">
-<div id="status"></div>
-<div id="room-display"></div>
-<button id="btn-host">Spiel erstellen 🎮</button>
-<button id="btn-join">Beitreten 🤝</button>
-<div id="join-section" style="display:none">
-<input id="join-input" placeholder="Raum-Code eingeben...">
-<br><button id="btn-connect">Verbinden</button>
+<button id="btn-start">START! 🏓</button>
 </div>
+<div id="win">
+<h2 id="win-text"></h2>
+<button id="btn-restart">Nochmal! 🔄</button>
 </div>
 <div id="gmsg"></div>
 
-<script type="module">
-import {joinRoom} from 'https://cdn.jsdelivr.net/npm/trystero/nostr.min.js';
-
+<script>
 const canvas=document.getElementById('game');
 const ctx=canvas.getContext('2d');
-const st=document.getElementById('status');
-const menu=document.getElementById('menu');
-const scoresDiv=document.getElementById('scores');
 const gmsg=document.getElementById('gmsg');
-const roomDisp=document.getElementById('room-display');
+const CW=700,CH=450,PW=14,PH=90,BR=10,WIN_SCORE=7;
+const PHRASES=['DIGGA OHNE SCHEISS!','BRUDER WAS?!','ALTER!','SHEEEESH!','VALLAH!','OHHH!','KRANKER MOVE!'];
 
-const PW=12,PH=80,BR=8,CW=600,CH=400;
-let isHost=false,gameOn=false,myScore=0,theirScore=0,myY=160;
-let sendPaddle,sendState,sendEvent;
-let state={ball:{x:300,y:200,vx:5,vy:3},p1:{y:160},p2:{y:160}};
-let peerJoined=false;
+let p1={y:CH/2-PH/2,score:0,speed:0};
+let p2={y:CH/2-PH/2,score:0,speed:0};
+let ball={x:CW/2,y:CH/2,vx:0,vy:0};
+let keys={},gameOn=false,countdown=0;
 
-const rtcConfig={
-  iceServers:[
-    {urls:'stun:stun.l.google.com:19302'},
-    {urls:'stun:stun1.l.google.com:19302'},
-    {urls:'turn:openrelay.metered.ca:80',username:'openrelayproject',credential:'openrelayproject'},
-    {urls:'turn:openrelay.metered.ca:443',username:'openrelayproject',credential:'openrelayproject'},
-    {urls:'turn:openrelay.metered.ca:443?transport=tcp',username:'openrelayproject',credential:'openrelayproject'}
-  ]
-};
-
-const params=new URLSearchParams(location.search);
-const joinCode=params.get('r');
-if(joinCode){
-  document.getElementById('btn-host').style.display='none';
-  document.getElementById('btn-join').style.display='none';
-  st.innerHTML='Verbinde mit Raum: <b>'+joinCode+'</b>...<br><span class="info">Suche Gegner über Nostr-Relays...</span>';
-  connect(joinCode,false);
-}
-
-document.getElementById('btn-host').onclick=()=>{
-  const code=Math.random().toString(36).slice(2,7).toUpperCase();
-  isHost=true;
-  document.getElementById('btn-host').style.display='none';
-  document.getElementById('btn-join').style.display='none';
-  const link=location.origin+location.pathname+'?r='+code;
-  roomDisp.style.display='block';
-  roomDisp.innerHTML='Raum-Code: <b style="font-size:1.4em">'+code+'</b><br><br>'
-    +'Link: <a href="'+link+'">'+link+'</a><br><br>'
-    +'<span class="info">Schick den Link oder Code deinem Kumpel!</span>';
-  st.innerHTML='Warte auf Gegner... 👀<br><span class="info">Verbinde über Nostr-Relays...</span>';
-  connect(code,true);
-};
-
-document.getElementById('btn-join').onclick=()=>{
-  document.getElementById('btn-host').style.display='none';
-  document.getElementById('btn-join').style.display='none';
-  document.getElementById('join-section').style.display='block';
-};
-
-document.getElementById('btn-connect').onclick=()=>{
-  const c=document.getElementById('join-input').value.trim().toUpperCase();
-  if(!c)return;
-  document.getElementById('join-section').style.display='none';
-  st.innerHTML='Verbinde mit Raum: <b>'+c+'</b>...<br><span class="info">Suche Gegner über Nostr-Relays...</span>';
-  connect(c,false);
-};
-
-function connect(code,hosting){
-  isHost=hosting;
-  const room=joinRoom({appId:'schnaggi-pong-v3',rtcConfig},code);
-  
-  const [sp,gp]=room.makeAction('p');
-  const [ss,gs]=room.makeAction('s');
-  const [se,ge]=room.makeAction('e');
-  sendPaddle=sp;sendState=ss;sendEvent=se;
-
-  gp(d=>{if(isHost)state.p2.y=d;else state.p1.y=d;});
-  gs(d=>{if(!isHost)state=d;});
-  ge(d=>{
-    if(d.t==='score'){myScore=d.them;theirScore=d.me;updateScores();}
-    if(d.t==='msg')showMsg(d.text);
-    if(d.t==='start')startGame();
-  });
-
-  room.onPeerJoin(pid=>{
-    peerJoined=true;
-    st.innerHTML='✅ Gegner verbunden!';
-    console.log('Peer joined:',pid);
-    if(isHost)setTimeout(()=>{sendEvent({t:'start'});startGame();},1500);
-  });
-  room.onPeerLeave(()=>{
-    st.innerHTML='❌ Gegner hat verlassen';
-    gameOn=false;menu.style.display='block';canvas.style.display='none';scoresDiv.style.display='none';
-  });
-
-  // Connection timeout hint
+function resetBall(dir){
+  ball.x=CW/2;ball.y=CH/2;ball.vx=0;ball.vy=0;
+  countdown=90; // 1.5 sec at 60fps
   setTimeout(()=>{
-    if(!peerJoined){
-      st.innerHTML+=`<br><span class="info">⏳ Noch keine Verbindung... Stelle sicher, dass dein Kumpel den Link geöffnet hat!</span>`;
-    }
-  },15000);
+    ball.vx=(dir||( Math.random()>0.5?1:-1))*5;
+    ball.vy=(Math.random()-0.5)*5;
+    countdown=0;
+  },1500);
 }
+
+function showMsg(t){gmsg.textContent=t;gmsg.style.opacity=1;setTimeout(()=>gmsg.style.opacity=0,1200);}
+function randPhrase(){return PHRASES[Math.floor(Math.random()*PHRASES.length)];}
 
 function startGame(){
-  menu.style.display='none';
-  canvas.style.display='block';
-  scoresDiv.style.display='block';
-  gameOn=true;myScore=0;theirScore=0;updateScores();
-  showMsg("LOS GEHT'S! 🏓");
-  if(isHost)resetBall();
+  document.getElementById('menu').style.display='none';
+  document.getElementById('win').style.display='none';
+  p1.score=0;p2.score=0;p1.y=CH/2-PH/2;p2.y=CH/2-PH/2;
+  updateScores();gameOn=true;
+  showMsg("3... 2... 1... LOS!");
+  resetBall();
   requestAnimationFrame(loop);
 }
 
-function resetBall(){state.ball={x:300,y:200,vx:(Math.random()>0.5?1:-1)*5,vy:(Math.random()-0.5)*6};}
-
 function updateScores(){
-  document.getElementById('s1').textContent=myScore;
-  document.getElementById('s2').textContent=theirScore;
+  document.getElementById('s1').textContent=p1.score;
+  document.getElementById('s2').textContent=p2.score;
 }
 
-function showMsg(t){gmsg.textContent=t;gmsg.style.opacity=1;setTimeout(()=>gmsg.style.opacity=0,1500);}
+function checkWin(){
+  if(p1.score>=WIN_SCORE){
+    gameOn=false;
+    document.getElementById('win-text').textContent='🟢 SPIELER 1 GEWINNT! 🏆';
+    document.getElementById('win').style.display='block';
+    return true;
+  }
+  if(p2.score>=WIN_SCORE){
+    gameOn=false;
+    document.getElementById('win-text').textContent='🔴 SPIELER 2 GEWINNT! 🏆';
+    document.getElementById('win').style.display='block';
+    return true;
+  }
+  return false;
+}
 
-let frameCnt=0;
 function loop(){
   if(!gameOn)return;
-  frameCnt++;
-  if(frameCnt%2===0)sendPaddle(myY); // throttle sends
 
-  if(isHost){
-    state.p1.y=myY;
-    let b=state.ball;
-    b.x+=b.vx;b.y+=b.vy;
-    if(b.y-BR<0){b.y=BR;b.vy=Math.abs(b.vy);}
-    if(b.y+BR>CH){b.y=CH-BR;b.vy=-Math.abs(b.vy);}
-    if(b.x-BR<PW+10&&b.y>state.p1.y&&b.y<state.p1.y+PH&&b.vx<0){
-      b.vx=Math.abs(b.vx)*1.05;b.vy+=(b.y-(state.p1.y+PH/2))*0.15;
+  // Paddle movement (smooth)
+  const spd=6;
+  if(keys['w']||keys['W'])p1.y=Math.max(0,p1.y-spd);
+  if(keys['s']||keys['S'])p1.y=Math.min(CH-PH,p1.y+spd);
+  if(keys['ArrowUp'])p2.y=Math.max(0,p2.y-spd);
+  if(keys['ArrowDown'])p2.y=Math.min(CH-PH,p2.y+spd);
+
+  if(countdown<=0){
+    // Ball physics
+    ball.x+=ball.vx;ball.y+=ball.vy;
+
+    // Top/bottom
+    if(ball.y-BR<0){ball.y=BR;ball.vy=Math.abs(ball.vy);}
+    if(ball.y+BR>CH){ball.y=CH-BR;ball.vy=-Math.abs(ball.vy);}
+
+    // P1 paddle (left)
+    if(ball.x-BR<20+PW&&ball.x-BR>10&&ball.y>p1.y-5&&ball.y<p1.y+PH+5&&ball.vx<0){
+      ball.vx=Math.abs(ball.vx)*1.08;
+      ball.vy+=(ball.y-(p1.y+PH/2))*0.2;
+      ball.x=20+PW+BR;
+      showMsg(randPhrase());
     }
-    if(b.x+BR>CW-10-PW&&b.y>state.p2.y&&b.y<state.p2.y+PH&&b.vx>0){
-      b.vx=-Math.abs(b.vx)*1.05;b.vy+=(b.y-(state.p2.y+PH/2))*0.15;
+    // P2 paddle (right)
+    if(ball.x+BR>CW-20-PW&&ball.x+BR<CW-10&&ball.y>p2.y-5&&ball.y<p2.y+PH+5&&ball.vx>0){
+      ball.vx=-Math.abs(ball.vx)*1.08;
+      ball.vy+=(ball.y-(p2.y+PH/2))*0.2;
+      ball.x=CW-20-PW-BR;
+      showMsg(randPhrase());
     }
-    let spd=Math.sqrt(b.vx*b.vx+b.vy*b.vy);
-    if(spd>15){b.vx*=15/spd;b.vy*=15/spd;}
-    if(b.x<0){
-      theirScore++;updateScores();
-      sendEvent({t:'score',me:theirScore,them:myScore});
-      showMsg('DIGGA! 💀');sendEvent({t:'msg',text:'JAAAA! 🔥'});
-      resetBall();
+
+    // Speed cap
+    let spd2=Math.sqrt(ball.vx*ball.vx+ball.vy*ball.vy);
+    if(spd2>14){ball.vx*=14/spd2;ball.vy*=14/spd2;}
+
+    // Score
+    if(ball.x<-20){
+      p2.score++;updateScores();
+      showMsg('PUNKT FÜR ROT! 🔴');
+      if(!checkWin())resetBall(-1);
     }
-    if(b.x>CW){
-      myScore++;updateScores();
-      sendEvent({t:'score',me:myScore,them:theirScore});
-      showMsg('JAAAA! 🔥');sendEvent({t:'msg',text:'DIGGA! 💀'});
-      resetBall();
+    if(ball.x>CW+20){
+      p1.score++;updateScores();
+      showMsg('PUNKT FÜR GRÜN! 🟢');
+      if(!checkWin())resetBall(1);
     }
-    if(frameCnt%2===0)sendState(state);
-  }else{
-    state.p2.y=myY;
+  } else {
+    countdown--;
   }
+
   draw();
   requestAnimationFrame(loop);
 }
 
 function draw(){
   ctx.clearRect(0,0,CW,CH);
-  ctx.setLineDash([8,8]);ctx.strokeStyle='#333';
-  ctx.beginPath();ctx.moveTo(300,0);ctx.lineTo(300,400);ctx.stroke();
+
+  // Background grid
+  ctx.strokeStyle='#1f2b47';ctx.lineWidth=1;
+  for(let i=0;i<CW;i+=40){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,CH);ctx.stroke();}
+  for(let i=0;i<CH;i+=40){ctx.beginPath();ctx.moveTo(0,i);ctx.lineTo(CW,i);ctx.stroke();}
+
+  // Center line
+  ctx.setLineDash([10,10]);ctx.strokeStyle='#334';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(CW/2,0);ctx.lineTo(CW/2,CH);ctx.stroke();
   ctx.setLineDash([]);
-  ctx.fillStyle='#0f0';ctx.fillRect(10,state.p1.y,PW,PH);
-  ctx.fillStyle='#e94560';ctx.fillRect(CW-10-PW,state.p2.y,PW,PH);
+
+  // Center circle
+  ctx.strokeStyle='#334';ctx.beginPath();ctx.arc(CW/2,CH/2,50,0,Math.PI*2);ctx.stroke();
+
+  // Paddles with glow
+  ctx.shadowBlur=15;
+  ctx.shadowColor='#0f0';ctx.fillStyle='#0f0';
+  ctx.fillRect(20,p1.y,PW,PH);
+  ctx.shadowColor='#e94560';ctx.fillStyle='#e94560';
+  ctx.fillRect(CW-20-PW,p2.y,PW,PH);
+  ctx.shadowBlur=0;
+
+  // Ball with trail effect
+  ctx.fillStyle='rgba(255,255,255,0.15)';
+  ctx.beginPath();ctx.arc(ball.x-ball.vx*2,ball.y-ball.vy*2,BR,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.3)';
+  ctx.beginPath();ctx.arc(ball.x-ball.vx,ball.y-ball.vy,BR,0,Math.PI*2);ctx.fill();
+
+  ctx.shadowBlur=10;ctx.shadowColor='#fff';
   ctx.fillStyle='#fff';ctx.beginPath();
-  ctx.arc(state.ball.x,state.ball.y,BR,0,Math.PI*2);ctx.fill();
+  ctx.arc(ball.x,ball.y,BR,0,Math.PI*2);ctx.fill();
+  ctx.shadowBlur=0;
+
+  // Schnaggi face on ball
+  ctx.fillStyle='#000';
+  ctx.fillRect(ball.x-4,ball.y-3,3,3);
+  ctx.fillRect(ball.x+1,ball.y-3,3,3);
+  ctx.fillRect(ball.x-2,ball.y+2,4,2);
+
+  // Countdown
+  if(countdown>0){
+    ctx.fillStyle='rgba(255,255,255,0.5)';
+    ctx.font='bold 60px sans-serif';ctx.textAlign='center';
+    ctx.fillText(Math.ceil(countdown/60),CW/2,CH/2+20);
+  }
+
+  // Score display on field
+  ctx.fillStyle='rgba(0,255,0,0.08)';ctx.font='bold 120px sans-serif';ctx.textAlign='center';
+  ctx.fillText(p1.score,CW/4,CH/2+40);
+  ctx.fillStyle='rgba(233,69,96,0.08)';
+  ctx.fillText(p2.score,CW*3/4,CH/2+40);
 }
 
-canvas.addEventListener('mousemove',e=>{
-  const r=canvas.getBoundingClientRect();
-  myY=Math.max(0,Math.min(CH-PH,(e.clientY-r.top)*(CH/r.height)-PH/2));
-});
+document.addEventListener('keydown',e=>{keys[e.key]=true;if(['ArrowUp','ArrowDown'].includes(e.key))e.preventDefault();});
+document.addEventListener('keyup',e=>{keys[e.key]=false;});
+
+document.getElementById('btn-start').onclick=startGame;
+document.getElementById('btn-restart').onclick=startGame;
+
+// Touch controls for mobile (split screen)
+let touch1=null,touch2=null;
+canvas.addEventListener('touchstart',e=>{e.preventDefault();},{ passive:false });
 canvas.addEventListener('touchmove',e=>{
   e.preventDefault();
   const r=canvas.getBoundingClientRect();
-  myY=Math.max(0,Math.min(CH-PH,(e.touches[0].clientY-r.top)*(CH/r.height)-PH/2));
-});
-document.addEventListener('keydown',e=>{
-  if(e.key==='ArrowUp'||e.key==='w')myY=Math.max(0,myY-20);
-  if(e.key==='ArrowDown'||e.key==='s')myY=Math.min(CH-PH,myY+20);
-});
+  for(let t of e.touches){
+    const x=(t.clientX-r.left)*(CW/r.width);
+    const y=(t.clientY-r.top)*(CH/r.height);
+    if(x<CW/2) p1.y=Math.max(0,Math.min(CH-PH,y-PH/2));
+    else p2.y=Math.max(0,Math.min(CH-PH,y-PH/2));
+  }
+},{passive:false});
 </script>
 </body>
 </html>
