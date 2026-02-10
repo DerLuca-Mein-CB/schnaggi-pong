@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🏓 Schnaggi Pong - Multiplayer</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Segoe UI',sans-serif;color:#fff;overflow:hidden;touch-action:none}
+h1{font-size:1.8em;margin-bottom:8px;text-shadow:0 0 20px #e94560}
+#menu{text-align:center;margin:20px}
+button{font-size:1.1em;padding:12px 28px;margin:8px;background:#e94560;color:#fff;border:none;border-radius:8px;cursor:pointer}
+button:hover{background:#c73e54}
+#status{color:#e94560;margin:10px;font-size:1.1em;min-height:1.4em}
+#link-box{background:#16213e;padding:12px;border-radius:8px;margin:10px;word-break:break-all;display:none;max-width:90vw}
+#link-box a{color:#0ff}
+canvas{border:3px solid #e94560;border-radius:8px;background:#16213e;display:none}
+#scores{font-size:1.4em;margin:8px;display:none}
+#scores span{margin:0 15px}
+.p1{color:#0f0}.p2{color:#e94560}
+#game-msg{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-size:2em;font-weight:bold;color:#fff;text-shadow:0 0 30px #e94560;pointer-events:none;opacity:0;transition:opacity 0.3s}
+</style>
+</head>
+<body>
+<h1>🏓 Schnaggi Pong</h1>
+<div id="scores"><span class="p1">Du: 0</span> | <span class="p2">Gegner: 0</span></div>
+<canvas id="game" width="600" height="400"></canvas>
+<div id="menu">
+<div id="status"></div>
+<button id="btn-host">Spiel erstellen 🎮</button>
+<button id="btn-join" style="display:none">Beitreten 🤝</button>
+<div id="link-box"></div>
+<input id="join-input" placeholder="Spiel-Code eingeben..." style="display:none;padding:10px;font-size:1em;border-radius:8px;border:none;margin:8px;width:250px">
+<button id="btn-connect" style="display:none">Verbinden</button>
+</div>
+<div id="game-msg"></div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const status = document.getElementById('status');
+const menu = document.getElementById('menu');
+const scoresDiv = document.getElementById('scores');
+const gameMsg = document.getElementById('game-msg');
+
+let peer, conn, isHost = false, gameRunning = false;
+let myScore = 0, theirScore = 0;
+
+// Game state
+const PADDLE_W = 12, PADDLE_H = 80, BALL_R = 8;
+let state = {
+  ball: {x:300,y:200,vx:4,vy:3},
+  p1: {y:160}, p2: {y:160}
+};
+let myY = 160, mouseActive = false;
+
+// URL params
+const params = new URLSearchParams(location.search);
+const joinCode = params.get('join');
+
+if (joinCode) {
+  document.getElementById('btn-host').style.display = 'none';
+  status.textContent = 'Verbinde mit Spiel...';
+  initPeer(() => joinGame(joinCode));
+} else {
+  document.getElementById('btn-join').style.display = 'inline-block';
+}
+
+document.getElementById('btn-host').onclick = () => {
+  isHost = true;
+  status.textContent = 'Erstelle Spiel...';
+  document.getElementById('btn-host').disabled = true;
+  document.getElementById('btn-join').style.display = 'none';
+  initPeer(() => {
+    const link = location.origin + location.pathname + '?join=' + peer.id;
+    const linkBox = document.getElementById('link-box');
+    linkBox.style.display = 'block';
+    linkBox.innerHTML = '<b>Schick diesen Link deinem Kumpel:</b><br><br><a href="'+link+'">'+link+'</a><br><br>Oder Code: <b>'+peer.id+'</b>';
+    status.textContent = 'Warte auf Gegner... 👀';
+    
+    peer.on('connection', c => {
+      conn = c;
+      setupConn();
+    });
+  });
+};
+
+document.getElementById('btn-join').onclick = () => {
+  document.getElementById('btn-host').style.display = 'none';
+  document.getElementById('btn-join').style.display = 'none';
+  document.getElementById('join-input').style.display = 'inline-block';
+  document.getElementById('btn-connect').style.display = 'inline-block';
+};
+
+document.getElementById('btn-connect').onclick = () => {
+  const code = document.getElementById('join-input').value.trim();
+  if (!code) return;
+  status.textContent = 'Verbinde...';
+  initPeer(() => joinGame(code));
+};
+
+function initPeer(cb) {
+  peer = new Peer();
+  peer.on('open', () => cb());
+  peer.on('error', e => { status.textContent = '❌ Fehler: ' + e.type; });
+}
+
+function joinGame(id) {
+  isHost = false;
+  conn = peer.connect(id, {reliable:true});
+  setupConn();
+}
+
+function setupConn() {
+  conn.on('open', () => {
+    status.textContent = '✅ Verbunden!';
+    setTimeout(startGame, 1000);
+  });
+  conn.on('data', d => {
+    if (d.type === 'state') {
+      state = d.state;
+    } else if (d.type === 'paddle') {
+      if (isHost) state.p2.y = d.y;
+      else state.p1.y = d.y;
+    } else if (d.type === 'score') {
+      myScore = d.them; theirScore = d.me;
+      updateScores();
+    } else if (d.type === 'msg') {
+      showMsg(d.text);
+    }
+  });
+  conn.on('close', () => { status.textContent = '❌ Verbindung verloren'; gameRunning = false; });
+}
+
+function startGame() {
+  menu.style.display = 'none';
+  canvas.style.display = 'block';
+  scoresDiv.style.display = 'block';
+  gameRunning = true;
+  myScore = 0; theirScore = 0;
+  updateScores();
+  showMsg('LOS GEHT\'S! 🏓');
+  if (isHost) resetBall();
+  requestAnimationFrame(loop);
+}
+
+function resetBall() {
+  state.ball = {x:300, y:200, vx:(Math.random()>0.5?1:-1)*5, vy:(Math.random()-0.5)*6};
+}
+
+function updateScores() {
+  scoresDiv.innerHTML = '<span class="p1">Du: '+myScore+'</span> | <span class="p2">Gegner: '+theirScore+'</span>';
+}
+
+function showMsg(text) {
+  gameMsg.textContent = text;
+  gameMsg.style.opacity = 1;
+  setTimeout(() => gameMsg.style.opacity = 0, 1500);
+}
+
+function loop() {
+  if (!gameRunning) return;
+  
+  // Send my paddle pos
+  if (conn && conn.open) {
+    conn.send({type:'paddle', y:myY});
+  }
+  
+  if (isHost) {
+    // Update my paddle
+    state.p1.y = myY;
+    
+    // Ball physics
+    let b = state.ball;
+    b.x += b.vx; b.y += b.vy;
+    
+    // Top/bottom bounce
+    if (b.y - BALL_R < 0) { b.y = BALL_R; b.vy = Math.abs(b.vy); }
+    if (b.y + BALL_R > 400) { b.y = 400-BALL_R; b.vy = -Math.abs(b.vy); }
+    
+    // Paddle collision P1 (left)
+    if (b.x - BALL_R < PADDLE_W+10 && b.y > state.p1.y && b.y < state.p1.y+PADDLE_H && b.vx<0) {
+      b.vx = Math.abs(b.vx)*1.05;
+      b.vy += (b.y - (state.p1.y+PADDLE_H/2))*0.15;
+    }
+    // Paddle collision P2 (right)
+    if (b.x + BALL_R > 590-PADDLE_W && b.y > state.p2.y && b.y < state.p2.y+PADDLE_H && b.vx>0) {
+      b.vx = -Math.abs(b.vx)*1.05;
+      b.vy += (b.y - (state.p2.y+PADDLE_H/2))*0.15;
+    }
+    
+    // Cap speed
+    let spd = Math.sqrt(b.vx*b.vx+b.vy*b.vy);
+    if (spd > 15) { b.vx *= 15/spd; b.vy *= 15/spd; }
+    
+    // Score
+    if (b.x < 0) {
+      theirScore++; // P2 scores (right player = opponent for host)
+      myScore; // P1 is host
+      // Actually: left side miss = point for P2
+      // For host: P1 is left, so if ball goes left, P2 scores
+      updateScores();
+      conn.send({type:'score', me:theirScore, them:myScore});
+      showMsg('DIGGA! 💀');
+      conn.send({type:'msg', text:'DIGGA! 🔥'});
+      resetBall();
+    }
+    if (b.x > 600) {
+      myScore++;
+      updateScores();
+      conn.send({type:'score', me:myScore, them:theirScore});
+      showMsg('JAAAA! 🔥');
+      conn.send({type:'msg', text:'NEIN! 💀'});
+      resetBall();
+    }
+    
+    // Send state
+    if (conn && conn.open) conn.send({type:'state', state});
+  } else {
+    // Client: update P2
+    state.p2.y = myY;
+  }
+  
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function draw() {
+  ctx.clearRect(0,0,600,400);
+  
+  // Center line
+  ctx.setLineDash([8,8]);
+  ctx.strokeStyle='#333';
+  ctx.beginPath(); ctx.moveTo(300,0); ctx.lineTo(300,400); ctx.stroke();
+  ctx.setLineDash([]);
+  
+  // Paddles
+  let myPaddle, theirPaddle;
+  if (isHost) { myPaddle = state.p1; theirPaddle = state.p2; }
+  else { myPaddle = state.p2; theirPaddle = state.p1; }
+  
+  // P1 left
+  ctx.fillStyle = isHost ? '#0f0' : '#e94560';
+  ctx.fillRect(10, state.p1.y, PADDLE_W, PADDLE_H);
+  // P2 right
+  ctx.fillStyle = isHost ? '#e94560' : '#0f0';
+  ctx.fillRect(600-10-PADDLE_W, state.p2.y, PADDLE_W, PADDLE_H);
+  
+  // Ball
+  ctx.fillStyle='#fff';
+  ctx.beginPath();
+  ctx.arc(state.ball.x, state.ball.y, BALL_R, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#000';
+  ctx.fillRect(state.ball.x-3, state.ball.y-4, 3, 3);
+  ctx.fillRect(state.ball.x+1, state.ball.y-4, 3, 3);
+}
+
+// Controls
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  myY = Math.max(0, Math.min(400-PADDLE_H, (e.clientY-r.top)*(400/r.height) - PADDLE_H/2));
+});
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  myY = Math.max(0, Math.min(400-PADDLE_H, (e.touches[0].clientY-r.top)*(400/r.height) - PADDLE_H/2));
+});
+
+// Keyboard fallback
+document.addEventListener('keydown', e => {
+  if (e.key==='ArrowUp'||e.key==='w') myY = Math.max(0, myY-20);
+  if (e.key==='ArrowDown'||e.key==='s') myY = Math.min(400-PADDLE_H, myY+20);
+});
+</script>
+</body>
+</html>
