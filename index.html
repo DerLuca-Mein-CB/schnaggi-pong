@@ -3,145 +3,239 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🏓 Schnaggi Pong - Multiplayer</title>
+<title>🏓 Schnaggi Pong - Online Multiplayer</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Segoe UI',sans-serif;color:#fff;overflow:hidden}
+body{background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Segoe UI',sans-serif;color:#fff;overflow:hidden;touch-action:none}
 h1{font-size:1.8em;margin-bottom:5px;text-shadow:0 0 20px #e94560}
 .sub{color:#888;margin-bottom:10px;font-size:0.9em}
-#menu{text-align:center;margin:10px}
+#menu{text-align:center;margin:15px}
 button{font-size:1.1em;padding:12px 28px;margin:8px;background:#e94560;color:#fff;border:none;border-radius:8px;cursor:pointer}
 button:hover{background:#c73e54}
-canvas{border:3px solid #e94560;border-radius:8px;background:#16213e}
-#scores{font-size:1.5em;margin:10px}
+input{padding:12px;font-size:1.1em;border-radius:8px;border:none;margin:8px;width:260px;text-align:center;background:#16213e;color:#fff}
+#status{color:#e94560;margin:10px;font-size:1.1em;min-height:1.4em}
+canvas{border:3px solid #e94560;border-radius:8px;background:#16213e;display:none;max-width:95vw}
+#scores{font-size:1.5em;margin:10px;display:none}
 .p1c{color:#0f0}.p2c{color:#e94560}
 #gmsg{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-size:2.5em;font-weight:bold;color:#fff;text-shadow:0 0 30px #e94560;pointer-events:none;opacity:0;transition:opacity 0.3s;z-index:10}
-#controls{color:#888;font-size:0.9em;margin:8px}
-#win{display:none;text-align:center;margin:15px}
-#win h2{font-size:2em;color:#e94560;margin-bottom:10px}
+#room-info{background:#16213e;padding:15px 20px;border-radius:8px;margin:10px;font-size:1.1em;display:none;max-width:90vw}
+#room-info b{color:#0ff}
+.info{color:#888;font-size:0.85em}
+a{color:#0ff}
 </style>
 </head>
 <body>
 <h1>🏓 Schnaggi Pong</h1>
-<div class="sub">2 Spieler · 1 Tastatur</div>
-<div id="scores"><span class="p1c">🟢 Spieler 1: <span id="s1">0</span></span> &nbsp;|&nbsp; <span class="p2c">🔴 Spieler 2: <span id="s2">0</span></span></div>
+<div class="sub">Online Multiplayer</div>
+<div id="scores"><span class="p1c">🟢 Du: <span id="s1">0</span></span> &nbsp;|&nbsp; <span class="p2c">🔴 Gegner: <span id="s2">0</span></span></div>
 <canvas id="game" width="700" height="450"></canvas>
-<div id="controls">🟢 Spieler 1: <b>W</b> / <b>S</b> &nbsp;&nbsp;|&nbsp;&nbsp; 🔴 Spieler 2: <b>↑</b> / <b>↓</b></div>
 <div id="menu">
-<button id="btn-start">START! 🏓</button>
+<div id="status"></div>
+<div id="room-info"></div>
+<button id="btn-host">Spiel erstellen 🎮</button>
+<button id="btn-join">Beitreten 🤝</button>
+<div id="join-section" style="display:none">
+<input id="join-input" placeholder="Raum-Code eingeben...">
+<br><button id="btn-connect">Verbinden!</button>
 </div>
-<div id="win">
-<h2 id="win-text"></h2>
-<button id="btn-restart">Nochmal! 🔄</button>
 </div>
 <div id="gmsg"></div>
 
 <script>
+const RELAY='wss://schnaggi-relay.onrender.com';
 const canvas=document.getElementById('game');
 const ctx=canvas.getContext('2d');
 const gmsg=document.getElementById('gmsg');
+const st=document.getElementById('status');
+const roomInfo=document.getElementById('room-info');
 const CW=700,CH=450,PW=14,PH=90,BR=10,WIN_SCORE=7;
-const PHRASES=['DIGGA OHNE SCHEISS!','BRUDER WAS?!','ALTER!','SHEEEESH!','VALLAH!','OHHH!','KRANKER MOVE!'];
+const PHRASES=['DIGGA OHNE SCHEISS!','BRUDER WAS?!','ALTER!','SHEEEESH!','VALLAH!','OHHH!','KRANKER MOVE!','WIE BITTE?!','UNNORMAL!'];
 
-let p1={y:CH/2-PH/2,score:0,speed:0};
-let p2={y:CH/2-PH/2,score:0,speed:0};
-let ball={x:CW/2,y:CH/2,vx:0,vy:0};
-let keys={},gameOn=false,countdown=0;
+let ws,myPlayer=0,gameOn=false,isHost=false;
+let myY=CH/2-PH/2,keys={};
+let state={ball:{x:CW/2,y:CH/2,vx:0,vy:0},p1:{y:CH/2-PH/2},p2:{y:CH/2-PH/2},s1:0,s2:0};
+
+// Check URL for room code
+const params=new URLSearchParams(location.search);
+const autoJoin=params.get('r');
+if(autoJoin){
+  document.getElementById('btn-host').style.display='none';
+  document.getElementById('btn-join').style.display='none';
+  st.textContent='Verbinde mit Raum '+autoJoin+'...';
+  connect(autoJoin);
+}
+
+document.getElementById('btn-host').onclick=()=>{
+  const code=Math.random().toString(36).slice(2,7).toUpperCase();
+  document.getElementById('btn-host').style.display='none';
+  document.getElementById('btn-join').style.display='none';
+  const link=location.origin+location.pathname+'?r='+code;
+  roomInfo.style.display='block';
+  roomInfo.innerHTML='Raum-Code: <b style="font-size:1.4em">'+code+'</b><br><br>'
+    +'<a href="'+link+'" style="word-break:break-all">'+link+'</a><br><br>'
+    +'<span class="info">Schick den Link deinem Kumpel!</span>';
+  st.textContent='Verbinde...';
+  connect(code);
+};
+
+document.getElementById('btn-join').onclick=()=>{
+  document.getElementById('btn-host').style.display='none';
+  document.getElementById('btn-join').style.display='none';
+  document.getElementById('join-section').style.display='block';
+  document.getElementById('join-input').focus();
+};
+
+document.getElementById('btn-connect').onclick=()=>{
+  const c=document.getElementById('join-input').value.trim().toUpperCase();
+  if(!c)return;
+  document.getElementById('join-section').style.display='none';
+  st.textContent='Verbinde mit Raum '+c+'...';
+  connect(c);
+};
+
+function connect(room){
+  ws=new WebSocket(RELAY+'/?room='+encodeURIComponent(room));
+  
+  ws.onopen=()=>{st.textContent='Verbunden! Warte auf Gegner... 👀';};
+  
+  ws.onmessage=(e)=>{
+    const d=JSON.parse(e.data);
+    
+    if(d.t==='joined'){
+      myPlayer=d.player;
+      isHost=(myPlayer===1);
+      if(d.count===2){
+        st.textContent='✅ Beide Spieler da!';
+        setTimeout(startGame,1500);
+      } else {
+        st.textContent='Warte auf Gegner... 👀 (Du bist Spieler '+myPlayer+')';
+      }
+    }
+    else if(d.t==='peer_joined'){
+      st.textContent='✅ Gegner ist da!';
+      setTimeout(startGame,1500);
+    }
+    else if(d.t==='peer_left'){
+      gameOn=false;
+      document.getElementById('menu').style.display='block';
+      canvas.style.display='none';
+      document.getElementById('scores').style.display='none';
+      st.textContent='❌ Gegner hat verlassen';
+      roomInfo.style.display='none';
+    }
+    else if(d.t==='state'){
+      // Receive full game state from host
+      state=d.s;
+      updateScores();
+    }
+    else if(d.t==='paddle'){
+      // Host receives guest paddle
+      if(isHost) state.p2.y=d.y;
+    }
+    else if(d.t==='msg'){
+      showMsg(d.text);
+    }
+    else if(d.t==='error'){
+      st.textContent='❌ '+d.msg;
+    }
+  };
+  
+  ws.onclose=()=>{
+    if(gameOn){gameOn=false;st.textContent='❌ Verbindung verloren';}
+  };
+  ws.onerror=()=>{st.textContent='❌ Server nicht erreichbar. Versuche es gleich nochmal!';};
+}
+
+function send(obj){if(ws&&ws.readyState===1)ws.send(JSON.stringify(obj));}
+
+function startGame(){
+  document.getElementById('menu').style.display='none';
+  canvas.style.display='block';
+  document.getElementById('scores').style.display='block';
+  gameOn=true;
+  state.s1=0;state.s2=0;
+  state.p1.y=CH/2-PH/2;state.p2.y=CH/2-PH/2;
+  myY=CH/2-PH/2;
+  updateScores();
+  showMsg("LOS GEHT'S! 🏓");
+  if(isHost)resetBall();
+  requestAnimationFrame(loop);
+}
 
 function resetBall(dir){
-  ball.x=CW/2;ball.y=CH/2;ball.vx=0;ball.vy=0;
-  countdown=90; // 1.5 sec at 60fps
+  state.ball={x:CW/2,y:CH/2,vx:0,vy:0};
   setTimeout(()=>{
-    ball.vx=(dir||( Math.random()>0.5?1:-1))*5;
-    ball.vy=(Math.random()-0.5)*5;
-    countdown=0;
-  },1500);
+    state.ball.vx=(dir||(Math.random()>0.5?1:-1))*5;
+    state.ball.vy=(Math.random()-0.5)*5;
+  },1000);
+}
+
+function updateScores(){
+  const ms=(myPlayer===1)?state.s1:state.s2;
+  const ts=(myPlayer===1)?state.s2:state.s1;
+  document.getElementById('s1').textContent=ms;
+  document.getElementById('s2').textContent=ts;
 }
 
 function showMsg(t){gmsg.textContent=t;gmsg.style.opacity=1;setTimeout(()=>gmsg.style.opacity=0,1200);}
 function randPhrase(){return PHRASES[Math.floor(Math.random()*PHRASES.length)];}
 
-function startGame(){
-  document.getElementById('menu').style.display='none';
-  document.getElementById('win').style.display='none';
-  p1.score=0;p2.score=0;p1.y=CH/2-PH/2;p2.y=CH/2-PH/2;
-  updateScores();gameOn=true;
-  showMsg("3... 2... 1... LOS!");
-  resetBall();
-  requestAnimationFrame(loop);
-}
-
-function updateScores(){
-  document.getElementById('s1').textContent=p1.score;
-  document.getElementById('s2').textContent=p2.score;
-}
-
-function checkWin(){
-  if(p1.score>=WIN_SCORE){
-    gameOn=false;
-    document.getElementById('win-text').textContent='🟢 SPIELER 1 GEWINNT! 🏆';
-    document.getElementById('win').style.display='block';
-    return true;
-  }
-  if(p2.score>=WIN_SCORE){
-    gameOn=false;
-    document.getElementById('win-text').textContent='🔴 SPIELER 2 GEWINNT! 🏆';
-    document.getElementById('win').style.display='block';
-    return true;
-  }
-  return false;
-}
-
+let fc=0;
 function loop(){
   if(!gameOn)return;
+  fc++;
 
-  // Paddle movement (smooth)
+  // Send my paddle
   const spd=6;
-  if(keys['w']||keys['W'])p1.y=Math.max(0,p1.y-spd);
-  if(keys['s']||keys['S'])p1.y=Math.min(CH-PH,p1.y+spd);
-  if(keys['ArrowUp'])p2.y=Math.max(0,p2.y-spd);
-  if(keys['ArrowDown'])p2.y=Math.min(CH-PH,p2.y+spd);
+  if(keys['w']||keys['W']||keys['ArrowUp'])myY=Math.max(0,myY-spd);
+  if(keys['s']||keys['S']||keys['ArrowDown'])myY=Math.min(CH-PH,myY+spd);
 
-  if(countdown<=0){
+  if(isHost){
+    state.p1.y=myY;
     // Ball physics
-    ball.x+=ball.vx;ball.y+=ball.vy;
-
-    // Top/bottom
-    if(ball.y-BR<0){ball.y=BR;ball.vy=Math.abs(ball.vy);}
-    if(ball.y+BR>CH){ball.y=CH-BR;ball.vy=-Math.abs(ball.vy);}
-
-    // P1 paddle (left)
-    if(ball.x-BR<20+PW&&ball.x-BR>10&&ball.y>p1.y-5&&ball.y<p1.y+PH+5&&ball.vx<0){
-      ball.vx=Math.abs(ball.vx)*1.08;
-      ball.vy+=(ball.y-(p1.y+PH/2))*0.2;
-      ball.x=20+PW+BR;
-      showMsg(randPhrase());
+    let b=state.ball;
+    if(b.vx!==0||b.vy!==0){
+      b.x+=b.vx;b.y+=b.vy;
+      if(b.y-BR<0){b.y=BR;b.vy=Math.abs(b.vy);}
+      if(b.y+BR>CH){b.y=CH-BR;b.vy=-Math.abs(b.vy);}
+      // P1 paddle
+      if(b.x-BR<20+PW&&b.x-BR>10&&b.y>state.p1.y-5&&b.y<state.p1.y+PH+5&&b.vx<0){
+        b.vx=Math.abs(b.vx)*1.08;b.vy+=(b.y-(state.p1.y+PH/2))*0.2;b.x=20+PW+BR;
+        const p=randPhrase();showMsg(p);send({t:'msg',text:p});
+      }
+      // P2 paddle
+      if(b.x+BR>CW-20-PW&&b.x+BR<CW-10&&b.y>state.p2.y-5&&b.y<state.p2.y+PH+5&&b.vx>0){
+        b.vx=-Math.abs(b.vx)*1.08;b.vy+=(b.y-(state.p2.y+PH/2))*0.2;b.x=CW-20-PW-BR;
+        const p=randPhrase();showMsg(p);send({t:'msg',text:p});
+      }
+      let sp=Math.sqrt(b.vx*b.vx+b.vy*b.vy);
+      if(sp>14){b.vx*=14/sp;b.vy*=14/sp;}
+      // Score
+      if(b.x<-20){
+        state.s2++;updateScores();
+        const m='PUNKT! 🔴';showMsg(m);send({t:'msg',text:m});
+        if(state.s2>=WIN_SCORE){
+          const w=myPlayer===2?'DU GEWINNST! 🏆':'GEGNER GEWINNT! 💀';
+          showMsg(w);send({t:'msg',text:myPlayer===1?'DU GEWINNST! 🏆':'GEGNER GEWINNT! 💀'});
+          gameOn=false;
+        }else resetBall(-1);
+      }
+      if(b.x>CW+20){
+        state.s1++;updateScores();
+        const m='PUNKT! 🟢';showMsg(m);send({t:'msg',text:m});
+        if(state.s1>=WIN_SCORE){
+          const w=myPlayer===1?'DU GEWINNST! 🏆':'GEGNER GEWINNT! 💀';
+          showMsg(w);send({t:'msg',text:myPlayer===2?'DU GEWINNST! 🏆':'GEGNER GEWINNT! 💀'});
+          gameOn=false;
+        }else resetBall(1);
+      }
     }
-    // P2 paddle (right)
-    if(ball.x+BR>CW-20-PW&&ball.x+BR<CW-10&&ball.y>p2.y-5&&ball.y<p2.y+PH+5&&ball.vx>0){
-      ball.vx=-Math.abs(ball.vx)*1.08;
-      ball.vy+=(ball.y-(p2.y+PH/2))*0.2;
-      ball.x=CW-20-PW-BR;
-      showMsg(randPhrase());
-    }
-
-    // Speed cap
-    let spd2=Math.sqrt(ball.vx*ball.vx+ball.vy*ball.vy);
-    if(spd2>14){ball.vx*=14/spd2;ball.vy*=14/spd2;}
-
-    // Score
-    if(ball.x<-20){
-      p2.score++;updateScores();
-      showMsg('PUNKT FÜR ROT! 🔴');
-      if(!checkWin())resetBall(-1);
-    }
-    if(ball.x>CW+20){
-      p1.score++;updateScores();
-      showMsg('PUNKT FÜR GRÜN! 🟢');
-      if(!checkWin())resetBall(1);
-    }
+    // Send state to guest
+    if(fc%2===0)send({t:'state',s:state});
   } else {
-    countdown--;
+    // Guest: send paddle, receive state
+    state.p2.y=myY;
+    if(fc%2===0)send({t:'paddle',y:myY});
   }
 
   draw();
@@ -150,78 +244,51 @@ function loop(){
 
 function draw(){
   ctx.clearRect(0,0,CW,CH);
-
-  // Background grid
+  // Grid
   ctx.strokeStyle='#1f2b47';ctx.lineWidth=1;
   for(let i=0;i<CW;i+=40){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,CH);ctx.stroke();}
   for(let i=0;i<CH;i+=40){ctx.beginPath();ctx.moveTo(0,i);ctx.lineTo(CW,i);ctx.stroke();}
-
-  // Center line
+  // Center
   ctx.setLineDash([10,10]);ctx.strokeStyle='#334';ctx.lineWidth=2;
-  ctx.beginPath();ctx.moveTo(CW/2,0);ctx.lineTo(CW/2,CH);ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Center circle
+  ctx.beginPath();ctx.moveTo(CW/2,0);ctx.lineTo(CW/2,CH);ctx.stroke();ctx.setLineDash([]);
   ctx.strokeStyle='#334';ctx.beginPath();ctx.arc(CW/2,CH/2,50,0,Math.PI*2);ctx.stroke();
-
-  // Paddles with glow
+  // Paddles
   ctx.shadowBlur=15;
-  ctx.shadowColor='#0f0';ctx.fillStyle='#0f0';
-  ctx.fillRect(20,p1.y,PW,PH);
-  ctx.shadowColor='#e94560';ctx.fillStyle='#e94560';
-  ctx.fillRect(CW-20-PW,p2.y,PW,PH);
+  ctx.shadowColor='#0f0';ctx.fillStyle='#0f0';ctx.fillRect(20,state.p1.y,PW,PH);
+  ctx.shadowColor='#e94560';ctx.fillStyle='#e94560';ctx.fillRect(CW-20-PW,state.p2.y,PW,PH);
   ctx.shadowBlur=0;
-
-  // Ball with trail effect
+  // Ball trail
+  let b=state.ball;
   ctx.fillStyle='rgba(255,255,255,0.15)';
-  ctx.beginPath();ctx.arc(ball.x-ball.vx*2,ball.y-ball.vy*2,BR,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(b.x-b.vx*2,b.y-b.vy*2,BR,0,Math.PI*2);ctx.fill();
   ctx.fillStyle='rgba(255,255,255,0.3)';
-  ctx.beginPath();ctx.arc(ball.x-ball.vx,ball.y-ball.vy,BR,0,Math.PI*2);ctx.fill();
-
-  ctx.shadowBlur=10;ctx.shadowColor='#fff';
-  ctx.fillStyle='#fff';ctx.beginPath();
-  ctx.arc(ball.x,ball.y,BR,0,Math.PI*2);ctx.fill();
-  ctx.shadowBlur=0;
-
-  // Schnaggi face on ball
+  ctx.beginPath();ctx.arc(b.x-b.vx,b.y-b.vy,BR,0,Math.PI*2);ctx.fill();
+  ctx.shadowBlur=10;ctx.shadowColor='#fff';ctx.fillStyle='#fff';
+  ctx.beginPath();ctx.arc(b.x,b.y,BR,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+  // Schnaggi face
   ctx.fillStyle='#000';
-  ctx.fillRect(ball.x-4,ball.y-3,3,3);
-  ctx.fillRect(ball.x+1,ball.y-3,3,3);
-  ctx.fillRect(ball.x-2,ball.y+2,4,2);
-
-  // Countdown
-  if(countdown>0){
-    ctx.fillStyle='rgba(255,255,255,0.5)';
-    ctx.font='bold 60px sans-serif';ctx.textAlign='center';
-    ctx.fillText(Math.ceil(countdown/60),CW/2,CH/2+20);
-  }
-
-  // Score display on field
-  ctx.fillStyle='rgba(0,255,0,0.08)';ctx.font='bold 120px sans-serif';ctx.textAlign='center';
-  ctx.fillText(p1.score,CW/4,CH/2+40);
-  ctx.fillStyle='rgba(233,69,96,0.08)';
-  ctx.fillText(p2.score,CW*3/4,CH/2+40);
+  ctx.fillRect(b.x-4,b.y-3,3,3);ctx.fillRect(b.x+1,b.y-3,3,3);ctx.fillRect(b.x-2,b.y+2,4,2);
+  // Field scores
+  ctx.fillStyle='rgba(0,255,0,0.06)';ctx.font='bold 120px sans-serif';ctx.textAlign='center';
+  ctx.fillText(state.s1,CW/4,CH/2+40);
+  ctx.fillStyle='rgba(233,69,96,0.06)';ctx.fillText(state.s2,CW*3/4,CH/2+40);
 }
 
 document.addEventListener('keydown',e=>{keys[e.key]=true;if(['ArrowUp','ArrowDown'].includes(e.key))e.preventDefault();});
 document.addEventListener('keyup',e=>{keys[e.key]=false;});
 
-document.getElementById('btn-start').onclick=startGame;
-document.getElementById('btn-restart').onclick=startGame;
-
-// Touch controls for mobile (split screen)
-let touch1=null,touch2=null;
-canvas.addEventListener('touchstart',e=>{e.preventDefault();},{ passive:false });
+// Touch: drag anywhere to move paddle
+canvas.addEventListener('touchstart',e=>e.preventDefault(),{passive:false});
 canvas.addEventListener('touchmove',e=>{
   e.preventDefault();
   const r=canvas.getBoundingClientRect();
-  for(let t of e.touches){
-    const x=(t.clientX-r.left)*(CW/r.width);
-    const y=(t.clientY-r.top)*(CH/r.height);
-    if(x<CW/2) p1.y=Math.max(0,Math.min(CH-PH,y-PH/2));
-    else p2.y=Math.max(0,Math.min(CH-PH,y-PH/2));
-  }
+  myY=Math.max(0,Math.min(CH-PH,(e.touches[0].clientY-r.top)*(CH/r.height)-PH/2));
 },{passive:false});
+// Mouse
+canvas.addEventListener('mousemove',e=>{
+  const r=canvas.getBoundingClientRect();
+  myY=Math.max(0,Math.min(CH-PH,(e.clientY-r.top)*(CH/r.height)-PH/2));
+});
 </script>
 </body>
 </html>
